@@ -98,6 +98,9 @@ def client():
                     # No 'validate' key here, allowing for any input including empty strings
             }]
             transaction_a = prompt(transaction_q, style=style)
+            if transaction_a["amount"] == 0 and transaction_a.get("message", "") == "":
+                print("You cant create a transaction with zero BCCs transferred and empty message, aborting...\n")
+                continue
             print("\nConfirmation:")
             confirmation_message = 'Do you confirm the below?\n' + 'Receiver node: ' + str(transaction_a["receiver"]) + '\n' + 'Amount of BCCs: ' + str(transaction_a["amount"]) + '\n'
             """ .get() safely access the "message" key in the 

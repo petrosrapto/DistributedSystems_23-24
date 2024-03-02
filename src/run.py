@@ -4,14 +4,13 @@ import requests
 import threading
 
 import config
-import block
 import endpoints
 from endpoints import node, rest_api
 from transaction import Transaction
 
 from flask_cors import CORS
 from argparse import ArgumentParser
-from flask import Flask, jsonify, request, render_template
+from flask import Flask
 
 # All nodes are aware of the ip and the port of the bootstrap
 # node, in order to communicate with it when entering the network.

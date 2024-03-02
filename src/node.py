@@ -1,7 +1,5 @@
 import requests
 import pickle
-import itertools
-# import random
 import numpy as np
 
 from copy import deepcopy
@@ -284,8 +282,6 @@ class Node:
             total_stakes += ring_node['stake']
         if total_stakes == 0:
             return None
-        # Use the hash of the last block as a seed
-        # random.seed(int(hash, 16))
 
         # Create a sorted list of (cumulative_probability, node_id) tuples
         cumulative_probabilities = []
@@ -295,8 +291,7 @@ class Node:
             cumulative_probabilities.append((cumulative_probability, ring_node["id"]))
 
         # Draw a random number and find the corresponding node
-        # rand = random.random()
-
+        # Use the hash of the last block as a seed
         rng = np.random.default_rng(seed=int(hash, 16))  
         rand = rng.random()
         return next(node_id for cum_prob, node_id in cumulative_probabilities if rand <= cum_prob)
