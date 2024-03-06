@@ -27,7 +27,7 @@ class Node:
                                 transactions waiting to be inserted to a block
         send_counter (int):     a counter that holds how many transactions were made
                                 by the current node as sender
-        capacity(int):          the number of transaction in a block
+        CAPACITY(int):          the number of transaction in a block
     """
 
     def __init__(self):

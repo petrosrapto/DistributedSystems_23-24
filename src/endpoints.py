@@ -313,3 +313,19 @@ def get_id():
         traceback_string = "".join(tb_str)
         print(traceback_string)
         return jsonify({'message': f"{e}"}), 500
+    
+@rest_api.route('/api/get_metrics', methods=['GET'])
+def get_metrics():
+    '''Endpoint that returns some useful parameters of the network.
+
+        Returns:
+            num_blocks: total number of blocks.
+            capacity: the capacity of each block.
+    '''
+    try:
+        return jsonify({'num_blocks': len(node.chain.blocks), 'capacity': node.CAPACITY})
+    except Exception as e:
+        tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+        traceback_string = "".join(tb_str)
+        print(traceback_string)
+        return jsonify({'message': f"{e}"}), 500
