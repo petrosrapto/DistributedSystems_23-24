@@ -93,6 +93,8 @@ def register_node():
 
         if (not IS_BOOTSTRAP):
             return jsonify({'message': "Node isnt bootstrap"}), 401
+        elif (len(node.ring) == N):
+            return jsonify({'message': "System is full, exactly N nodes are running"}), 401
 
         # Get the arguments
         node_key = request.form.get('public_key')

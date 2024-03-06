@@ -26,19 +26,24 @@ style = style_from_dict({
 })
 
 class NumberValidator(Validator):
-    def __init__(self, allow_negative=False):
-        self.allow_negative = allow_negative
-
     def validate(self, document):
         try:
-            value = int(document.text)
-            if not self.allow_negative and value < 0:
-                raise ValidationError(
-                    message="Please enter a non-negative number",
-                    cursor_position=len(document.text))
+            int(document.text)
         except ValueError:
             raise ValidationError(
                 message='Please enter a number',
+                cursor_position=len(document.text))
+
+class PositiveNumberValidator(Validator):
+    def validate(self, document):
+        try:
+            if int(document.text) < 0:
+                raise ValidationError(
+                    message="You gave negative number, try again",
+                    cursor_position=len(document.text))
+        except ValueError:
+            raise ValidationError(
+                message='Please enter a non-negative integer',
                 cursor_position=len(document.text))
 
 def HomeOrExit():
@@ -81,14 +86,14 @@ def client():
                     'type': 'input',
                     'name': 'receiver',
                     'message': 'Receiver (type receiver\'s id):',
-                    'validate': NumberValidator(allow_negative=False),
+                    'validate': PositiveNumberValidator,
                     'filter': lambda val: int(val)
                 },
                 {
                     'type': 'input',
                     'name': 'amount',
                     'message': 'Amount of BCC\'s to send (put 0 otherwise):',
-                    'validate': NumberValidator(allow_negative=False), # the amount can be 0
+                    'validate': PositiveNumberValidator, # the amount can be 0
                     'filter': lambda val: int(val)
                 },
                 {
@@ -154,7 +159,7 @@ def client():
                     'type': 'input',
                     'name': 'amount',
                     'message': 'Amount of BCC\'s to be (+)held/(-)freed from balance to stake:',
-                    'validate': NumberValidator(allow_negative=True), 
+                    'validate': NumberValidator, 
                     'filter': lambda val: int(val)
                 }]
             transaction_a = prompt(transaction_q, style=style)
