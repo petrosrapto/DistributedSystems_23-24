@@ -101,8 +101,8 @@ if __name__ == '__main__':
         
         gen_block.add_transaction(first_transaction)
         gen_block.set_hash()
-        node.update_balance(0, 1000 * endpoints.N, node.ring)
-        node.wallet.transactions.append(first_transaction)
+        node.update_balance(0, 1000 * endpoints.N, node.chainState_ring) 
+        node.wallet.transactions.append([first_transaction, "None", "Confirmed"])
         node.send_counter += 1
         # Add the genesis block in the chain.
         node.chain.blocks.append(gen_block)

@@ -70,7 +70,7 @@ def client():
                 'type': 'list',
                 'name': 'method',
                 'message': 'What would you like to do?',
-                'choices': ['New transaction', 'Update Stake', 'View last transactions', 'Show balance and stake', 'Help', 'Exit'],
+                'choices': ['New transaction', 'Update Stake', 'View last transactions', 'View my transactions', 'Show balance and stake', 'Help', 'Exit'],
                 'filter': lambda val: val.lower()
             }]
         method_a = prompt(method_q, style=style)["method"]
@@ -135,9 +135,9 @@ def client():
                         print("----------------------------------")
                         print("Your current balance is: " +
                                 str(balance) + " BCCs")
-                        print("Keep in mind that the balance isn't updated until")
-                        print("the transactions sent are inserted to a block and")
-                        print("added to the blockchain")
+                        print("Keep in mind that the previous balance is a temporary one.")
+                        print("In order to become permanent, the transaction sent must be")
+                        print("inserted to a block and added to the blockchain")
                         print("----------------------------------\n")
                 except:
                     print("\nNode is not active. Try again later.\n")
@@ -195,9 +195,9 @@ def client():
                         stake = response["stake"]
                         print("Your current stake is: " +
                                 str(stake) + " BCCs")
-                        print("Keep in mind that the balance and stake arent updated until")
-                        print("the transactions sent are inserted to a block and")
-                        print("added to the blockchain")
+                        print("Keep in mind that the previous stake and balance are temporary.")
+                        print("In order to become permanent, the transaction sent must be")
+                        print("inserted to a block and added to the blockchain")
                         print("----------------------------------\n")
                 except:
                     print("\nNode is not active. Try again later.\n")
@@ -240,6 +240,39 @@ def client():
                 break
             else:
                 os.system('cls||clear')
+        elif method_a == 'view my transactions':
+            print("My Transactions (confirmed or unconfirmed)")
+            print(
+                "----------------------------------------------------------------------\n")
+            address = 'http://' + IP_ADDR + ':' + \
+                str(PORT) + '/api/get_my_transactions'
+            try:
+                response = requests.get(address)
+                data = pickle.loads(response._content)
+                table = Texttable()
+                table.set_deco(Texttable.HEADER)
+                table.set_cols_dtype(['t',  # text
+                                      't',  # text
+                                      't',  # text
+                                      't',  # text
+                                      't',  # text
+                                      't'])  # text
+                table.set_cols_align(["c", "c", "c", "c", "c", "c"])
+                headers = ["Sender ID", "Receiver ID",
+                           "BCC\'s sent", "Message", "Validator ID", "Status"]
+                
+                # BCCs sent does not include fees
+                rows = []
+                rows.append(headers)
+                rows.extend(data)
+                table.add_rows(rows)
+                print(table.draw() + "\n")
+            except:
+                print("Node is not active. Try again later.\n")
+            if HomeOrExit() == 'exit':
+                break
+            else:
+                os.system('cls||clear')
         elif method_a == 'show balance and stake':
             print("Your balance and stake")
             print(
@@ -253,6 +286,8 @@ def client():
                 response = requests.get(address).json()
                 message = str(response['message'])
                 print("Your stake: " + message + ' BCCs\n')
+                print("Keep in mind that the previous stake and balance are temporary")
+                print("and they dont represent the state of the blockchain.")
             except:
                 print("Node is not active. Try again later.\n")
             if HomeOrExit() == 'exit':
@@ -274,7 +309,9 @@ def client():
             print("  Negative amount frees BCCs from stake and adds them to balance")
             print("- View last transactions: Prints the transactions of the last validated")
             print("  block of the BlockChat blockchain.")
-            print("- Show balance and stake: Prints the current balance and stake of your wallet.")
+            print("- View my transactions: Prints the transactions to or from the current wallet")
+            print("  The transactions added to the chain are labeled as 'Confirmed', otherwise 'Unconfirmed'")
+            print("- Show balance and stake: Prints the current temporary balance and stake of your wallet.")
             print("- Help: Prints usage information about the options.\n")
 
             if HomeOrExit() == 'exit':

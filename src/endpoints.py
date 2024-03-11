@@ -1,5 +1,6 @@
 import pickle
 from node import Node
+from copy import deepcopy
 
 from flask import Blueprint, jsonify, request
 import traceback
@@ -43,9 +44,14 @@ def get_block():
             node.add_block_to_chain(new_block, changed_ring)
             node.chain_lock.release()
             node.filter_transactions(new_block)
+            node.checkOutOfOrderBlocks()
             return jsonify({'message': "OK"})
-        else: # what happens when a block is rejected?
-            return jsonify({'mesage': "Block rejected."}), 409
+        # what happens when a block is rejected?
+        elif new_block.previous_hash != node.chain.blocks[-1].current_hash:
+            # received out of order 
+            node.outOfOrderBlocks.append(new_block)
+        else:
+            return jsonify({'mesage': "Block rejected."}), 400
     except Exception as e:
         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
         traceback_string = "".join(tb_str)
@@ -61,15 +67,22 @@ def validate_transaction():
             message: the outcome of the procedure.
 
        Note: Each validated transaction is added to the transactions pool,
-       from where blocks are shaped, gathering many transactions together
+       from where blocks are shaped, gathering many transactions together.
+       If the transaction is validated, the softState is changed.
     '''
     try:
         new_transaction = pickle.loads(request.get_data())
-        if node.validate_transaction(new_transaction):
+        (validation, changed_ring) = node.validate_transaction(new_transaction)
+        if validation:
             node.add_transaction_to_pool(new_transaction)
+            node.softState_ring = changed_ring
+            # if the current node is the receiver or the sendera added to its wallet
+            if (new_transaction.receiver_address == node.wallet.public_key or \
+                new_transaction.sender_address == node.wallet.public_key):
+                node.wallet.transactions.append([new_transaction, "None", "Unconfirmed"])
             return jsonify({'message': "OK"}), 200
         else:
-            return jsonify({'message': "The signature is not authentic"}), 401
+            return jsonify({'message': "The transaction is invalid"}), 400
     except Exception as e:
         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
         traceback_string = "".join(tb_str)
@@ -93,14 +106,14 @@ def register_node():
 
         if (not IS_BOOTSTRAP):
             return jsonify({'message': "Node isnt bootstrap"}), 401
-        elif (len(node.ring) == N):
+        elif (len(node.chainState_ring) == N):
             return jsonify({'message': "System is full, exactly N nodes are running"}), 401
 
         # Get the arguments
         node_key = request.form.get('public_key')
         node_ip = request.form.get('ip')
         node_port = request.form.get('port')
-        node_id = len(node.ring)
+        node_id = len(node.chainState_ring)
 
         # Add node in the list of registered nodes.
         node.register_node_to_ring(
@@ -110,11 +123,13 @@ def register_node():
         # - the current chain
         # - a transaction of their first BCCs
         if (node_id == N - 1):
-            for ring_node in node.ring:
+            # update the soft state of the bootstrap node
+            node.softState_ring = deepcopy(node.chainState_ring) 
+            for ring_node in node.chainState_ring:
                 if ring_node["id"] != node.id: # dont send to myself
                     node.share_ring(ring_node)
                     node.share_chain(ring_node)
-            for ring_node in node.ring:
+            for ring_node in node.chainState_ring:
                 if ring_node["id"] != node.id:
                     node.create_transaction(
                         receiver=ring_node['public_key'],
@@ -137,9 +152,9 @@ def get_ring():
             message: the outcome of the procedure.
     '''
     try:
-        node.ring = pickle.loads(request.get_data())
+        node.chainState_ring = pickle.loads(request.get_data())
         # Update the id of the node based on the given ring.
-        for ring_node in node.ring:
+        for ring_node in node.chainState_ring:
             if ring_node['public_key'] == node.wallet.public_key:
                 node.id = ring_node['id']
         return jsonify({'message': "OK"})
@@ -164,7 +179,13 @@ def get_chain():
         (validation, ring) = node.validate_chain(got_chain)
         if validation and len(node.chain.blocks) == 0:
             node.chain = got_chain
-            node.ring = ring
+            # init soft and chain state
+            node.chainState_ring = ring
+            node.softState_ring = ring 
+            # clear the transaction pool
+            node.transaction_pool_lock.acquire()
+            node.transaction_pool.clear()
+            node.transaction_pool_lock.release()
             return jsonify({'message': "OK"}), 200
         return jsonify({'message': "Chain rejected"}), 400
     except Exception as e:
@@ -220,7 +241,7 @@ def create_transaction():
     
     if (receiver_public_key and receiver_public_key != node.wallet.public_key):
         if node.create_transaction(receiver_public_key, amount, message):
-            return jsonify({'message': 'The transaction was successful.', 'balance': node.wallet.get_balance(), 'stake': node.wallet.get_stake()}), 200
+            return jsonify({'message': 'The transaction was created successfully.', 'balance': node.wallet.get_balance(), 'stake': node.wallet.get_stake()}), 200
         else:
             return jsonify({'message': 'Not enough BCCs.', 'balance': node.wallet.get_balance(), 'stake': node.wallet.get_stake()}), 400
     else:
@@ -291,7 +312,23 @@ def get_my_transactions():
             a formatted list of transactions in pickle format.
     '''
     try:
-        return pickle.dumps([tr.to_list() for tr in node.wallet.transactions])
+        wallet_transactions_list = [tr[0].to_list() for tr in node.wallet.transactions]
+        modified_transactions_list = [
+            [
+                node.key_to_ID(sender_address), 
+                "--" if receiver_address == "0" else node.key_to_ID(receiver_address), 
+                amount, 
+                "stake update" if receiver_address == "0" else message, 
+            ] 
+            for (sender_address, receiver_address, amount, message) in wallet_transactions_list
+        ]
+        for modified_transaction, original_transaction in zip(modified_transactions_list, node.wallet.transactions):
+            validator, status = original_transaction[1], original_transaction[2]
+            # Append the validator and status to the modified transaction list
+            validator = validator if validator == "None" else node.key_to_ID(validator)
+            modified_transaction.append(validator)
+            modified_transaction.append(status)
+        return pickle.dumps(modified_transactions_list)
     except Exception as e:
         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
         traceback_string = "".join(tb_str)

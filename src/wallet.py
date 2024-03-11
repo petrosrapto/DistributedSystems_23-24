@@ -9,7 +9,12 @@ class Wallet:
     Attributes:
         private_key (int): the private key of the node.
         public_key (int): the public key of the node (also serves as the node's address).
-        transactions (list): a list that contains the transactions of the node.
+        transactions (list of lists): a list of lists that contains the transactions of the node
+                             as list (transaction, validator, status)
+                             When a transaction is validated and is relevant to the current node,
+                             its added to the wallet as [transaction, "None", "Unconfirmed"]
+                             When a transaction is added to the blockchain, the transactions
+                             alter to [transaction, validator, "Confirmed"]
         parent_node (reference): pointer to the parent node
     """
 
@@ -30,8 +35,8 @@ class Wallet:
 
     def get_balance(self):
         """Returns the total balance of the wallet"""
-        return self.parent_node.ID_to_balance(self.parent_node.id, self.parent_node.ring)
+        return self.parent_node.ID_to_balance(self.parent_node.id, self.parent_node.softState_ring)
     
     def get_stake(self):
         """Returns the stake of the wallet"""
-        return self.parent_node.ID_to_stake(self.parent_node.id, self.parent_node.ring)
+        return self.parent_node.ID_to_stake(self.parent_node.id, self.parent_node.softState_ring)

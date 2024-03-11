@@ -19,10 +19,20 @@ class Node:
         id (int): the id of the node.
         chain (Blockchain): the blockchain that the node has.
         wallet (Wallet): the wallet of the node.
-        ring (list): list of information about other nodes
-                     (id, ip, port, public_key, balance, stake, nonces).
-                     nonces is a list where the nonces seen are kept
+        chainState_ring (list): list of information about other nodes
+                                (id, ip, port, public_key, balance, stake, nonces).
+                                nonces is a list where the nonces seen are kept.
+                                The balances, stakes, nonces are the ones up until the 
+                                last block of the chain, so they are valid but not 100% 
+                                up to date
+        softState_ring (list):  same with chainState_ring but the balances, stakes, nonces
+                                include the ones from the chainState with the additional 
+                                state's change enforced by the validated transactions
+                                of the transaction pool (which are not yet added to the blockchain).
+                                That means that the softState is NOT valid (added to the chain)
+                                but 100% up to date
         lock (Lock): a lock in order to provide mutual exclution for chain/transaction_pool.
+        outOfOrderBlocks (deque): A queue that contains the block that received out of order
         transaction_pool (deque): A queue that contains all the validated 
                                 transactions waiting to be inserted to a block
         send_counter (int):     a counter that holds how many transactions were made
@@ -35,10 +45,12 @@ class Node:
         self.id = None
         self.chain = Blockchain()
         self.wallet = self.generate_wallet() 
-        self.ring = []
+        self.chainState_ring = []
+        self.softState_ring = []
         self.chain_lock = Lock()
         self.transaction_pool_lock = Lock()
         self.transaction_pool = deque()
+        self.outOfOrderBlocks = deque()
         self.send_counter = 0
 
     def __str__(self):
@@ -69,7 +81,7 @@ class Node:
         This method is called only in the bootstrap node.
         """
 
-        self.ring.append(
+        self.chainState_ring.append(
             {
                 'id': id,
                 'ip': ip,
@@ -118,16 +130,19 @@ class Node:
         return next((ring_node['nonces'] for ring_node in ring if ring_node['id'] == id), None)
 
     def key_to_ID(self, address):
-        return next((ring_node['id'] for ring_node in self.ring if ring_node['public_key'] == address), 0)
+        return next((ring_node['id'] for ring_node in self.chainState_ring if ring_node['public_key'] == address), 0)
 
     def IP_to_ID(self, address):
-        return next((ring_node['id'] for ring_node in self.ring if ring_node['ip'] == address), None)
+        return next((ring_node['id'] for ring_node in self.chainState_ring if ring_node['ip'] == address), None)
     
     def ID_to_IP(self, id):
-        return next((ring_node['ip'] for ring_node in self.ring if ring_node['id'] == id), None)
+        return next((ring_node['ip'] for ring_node in self.chainState_ring if ring_node['id'] == id), None)
+
+    def ID_to_port(self, id):
+        return next((ring_node['port'] for ring_node in self.chainState_ring if ring_node['id'] == id), None)
 
     def ID_to_key(self, id):
-        return next((ring_node['public_key'] for ring_node in self.ring if ring_node['id'] == id), None)
+        return next((ring_node['public_key'] for ring_node in self.chainState_ring if ring_node['id'] == id), None)
 
     @staticmethod
     def totalChargedAmount(amount, message, stake=False):
@@ -161,7 +176,7 @@ class Node:
         transaction.sign_transaction(self.wallet.private_key)
 
         # validate the transaction (balance, amount)
-        if not self.validate_transaction(transaction):
+        if not self.validate_transaction(transaction)[0]:
             return False
 
         self.send_counter += 1 # increase send counter
@@ -198,7 +213,7 @@ class Node:
             requests.post(address + endpoint, data=pickle.dumps(transaction))
 
         threads = []
-        for node in self.ring:
+        for node in self.chainState_ring:
             thread = Thread(target=thread_func, args=(
                 node, '/validate_transaction'))
             threads.append(thread)
@@ -209,11 +224,14 @@ class Node:
 
         return True
 
-    def validate_transaction(self, transaction, ring=None):
+    def validate_transaction(self, transaction, ring=None, validator=None):
         """Validates an incoming transaction.
 
-        if not ring is given as argument, the node's ring 
+        if not ring is given as argument, the node's softState_ring 
         is checked, otherwise the argument-ring
+
+        we use softState_ring to validate a transaction cause we want
+        to check the transactions not added to a block yet
 
         that helps us validate a block full of transactions
         where a temporary ring must be kept and according
@@ -223,28 +241,43 @@ class Node:
         - verification of the signature.
         - check that the sender has enough balance
         - check if the nonce is seen
+
+        Returns the tuple (validation, changed_ring)
+        in other words, if the transaction is valid, and how 
+        the given ring will be if the transaction is applied
         """
 
         if not transaction.verify_signature():
-            return False
+            return (False, None)
 
-        ring = ring if ring is not None else self.ring
+        ring = ring if ring is not None else self.softState_ring
+        validator_id = validator if validator is not None else self.find_validator()
 
         # negative amounts are accepted only for stake transactions
         if transaction.amount < 0:
             if transaction.receiver_address != "0":
-                return False
+                return (False, None)
             # if the stakes update (amount) is greater than the actual stake
             if self.ID_to_stake(self.key_to_ID(transaction.sender_address), ring) < abs(transaction.amount):
-                return False
+                return (False, None)
         else:
             if self.ID_to_balance(self.key_to_ID(transaction.sender_address), ring) < self.totalChargedAmount(transaction.amount, transaction.message, transaction.receiver_address == "0"):
-                return False
+                return (False, None)
 
         if transaction.nonce in self.ID_to_nonces(self.key_to_ID(transaction.sender_address), ring):
-            return False
+            return (False, None)
 
-        return True
+        temp_ring = deepcopy(ring)
+        sender_id = self.key_to_ID(transaction.sender_address) 
+        self.update_balance(sender_id, -self.totalChargedAmount(transaction.amount, transaction.message, transaction.receiver_address == "0"), temp_ring)
+        self.update_nonces(sender_id, transaction.nonce, temp_ring)
+        if transaction.receiver_address == "0": #stake transaction
+            self.update_stake(sender_id, transaction.amount, temp_ring)
+        else: # regular transaction
+            receiver_id = self.key_to_ID(transaction.receiver_address)
+            self.update_balance(receiver_id, transaction.amount, temp_ring)
+            self.update_balance(validator_id, transaction.amount*0.03+len(transaction.message), temp_ring)
+        return (True, temp_ring)
 
     def add_transaction_to_pool(self, transaction):
         """Appends a transaction to the pool
@@ -264,16 +297,19 @@ class Node:
         """ Finds the validator of the block according 
             to the hash of the previous block 
             Implements Proof Of stake Algorithm
+
+            we use chainState_ring cause the validator can be found based
+            on the (up to) last block of the chain
         """
 
-        ring = ring if ring is not None else self.ring
+        ring = ring if ring is not None else self.chainState_ring
         chain = chain if chain is not None else self.chain
         hash = block.previous_hash if block is not None else chain.blocks[-1].current_hash
         """ find_validator is called in two cases:
             a) when a block is ready to be mined at the end of the chain
                 -> then we must check the current hash of the last block to determine the seed
             b) when a block is being validated 
-                -> then we must check the previous hast of the block being validated (the current
+                -> then we must check the previous hashS of the block being validated (the current
                 hash of the previous block)
         """
 
@@ -322,6 +358,9 @@ class Node:
         validation from other nodes, he adds the block to his blockchain 
         immediately upon successful mining.
         miner broadcasts it to himself as well
+
+        when we are about to send a block we dont need to validate it,
+        cause the transactions were validated while they were being received
         """
 
         def thread_func(node):
@@ -329,7 +368,7 @@ class Node:
             requests.post(address + '/get_block', data=pickle.dumps(block))
 
         threads = []
-        for node in self.ring:
+        for node in self.chainState_ring:
             thread = Thread(target=thread_func, args=(node,))
             threads.append(thread)
             thread.start()
@@ -352,6 +391,8 @@ class Node:
             is checked, otherwise the argument-ring
             same with chain
 
+            the block is validated based on the chainState_ring
+
             that helps us validate a blockchain full of blocks
             where a temporary ring must be kept and according
             to that the validate block must be called
@@ -362,48 +403,55 @@ class Node:
             is applied to the current state (self.ring)
         """
 
-        ring = ring if ring is not None else self.ring
+        ring = ring if ring is not None else self.chainState_ring
         chain = chain if chain is not None else self.chain
 
         if block.current_hash != block.get_hash(): 
             return (False, None)
         if block.previous_hash != chain.blocks[-1].current_hash:
             return (False, None)
-        validator_id = self.key_to_ID(block.validator)
-        if self.find_validator(block, ring, chain) != validator_id:
+        if self.find_validator(block, ring, chain) != self.key_to_ID(block.validator):
             return (False, None)
         
         temp_ring = deepcopy(ring)
         for transaction in block.transactions:
-            sender_id = self.key_to_ID(transaction.sender_address)
-            if not self.validate_transaction(transaction, temp_ring):
+            (validation, temp_ring) = self.validate_transaction(transaction, temp_ring, validator=self.key_to_ID(block.validator))
+            if validation == False:
                 return (False, None)
-            self.update_balance(sender_id, -self.totalChargedAmount(transaction.amount, transaction.message, transaction.receiver_address == "0"), temp_ring)
-            self.update_nonces(sender_id, transaction.nonce, temp_ring)
-            if transaction.receiver_address == "0": #stake transaction
-                self.update_stake(sender_id, transaction.amount, temp_ring)
-            else: # regular transaction
-                receiver_id = self.key_to_ID(transaction.receiver_address)
-                self.update_balance(receiver_id, transaction.amount, temp_ring)
-                self.update_balance(validator_id, transaction.amount*0.03+len(transaction.message), temp_ring)
         return (True, temp_ring)
 
     def add_block_to_chain(self, block, new_ring):
+        """ Adds a block at the end of the chain
+            alters the chainState_ring but 
+                   the softState_ring as well.
+            Everytime a block is added to the chain
+            of the current node, the softState becomes
+            identical to the chainState. However, if 
+            after filter_transactions() transactions remain 
+            in the transaction pool, they must get validated
+            again and the softState must adjust accordingly  
+        """
 
         # If the node is the recipient or the sender of the transaction,
         # it adds the transaction in its wallet.
         for tr in block.transactions:
-            if (tr.receiver_address == self.wallet.public_key):
-                self.wallet.transactions.append(tr)
-            if (tr.sender_address == self.wallet.public_key):
-                self.wallet.transactions.append(tr)
-
+            if (tr.receiver_address == self.wallet.public_key or \
+                tr.sender_address == self.wallet.public_key):
+                for w_tr in self.wallet.transactions:
+                    if w_tr[0] == tr:
+                        w_tr[1] = block.validator
+                        w_tr[2] = "Confirmed"
+                        break
+                    
         self.chain.blocks.append(block)
-        self.ring = new_ring
+        self.chainState_ring = deepcopy(new_ring)
+        self.softState_ring = deepcopy(new_ring)
 
     def filter_transactions(self, mined_block):
         """ When a block is got, validated and added to the chain,
-            we must remove its transactions from the transaction pool
+            we must remove its transactions from the transaction pool.
+            Additionally, if transactions remain in the transaction pool,
+            we should change the softState accordingly
         """
         self.transaction_pool_lock.acquire()
         try:
@@ -416,9 +464,31 @@ class Node:
                     # Transaction not found in the pool; can happen if it's already been removed
                     # or was not there to begin with.
                     pass
+            # MUST VALIDATE THE TRANSACTIONS REMAINED IN THE TRANSACTION POOL
+            # AND CHANGE THE SOFT STATE
+            for tr in self.transaction_pool:
+                (validation, changed_ring) = self.validate_transaction(tr)
+                if validation == True:
+                    self.softState_ring = changed_ring
+                else: # not valid, remove it
+                    self.transaction_pool.remove(tr)
         finally:
             #pass
             self.transaction_pool_lock.release()
+
+    def checkOutOfOrderBlocks(self):
+        """ When a block is got, validated and added to the chain,
+            and after the transaction filtering, we must check the 
+            deque that contained out of order blocks if now the blocks
+            can get in order. If there is the next block in the queue, 
+            remove it and send it again to myself
+        """
+        for outOfOrderBlock in self.outOfOrderBlocks:
+            if outOfOrderBlock.previous_hash == self.chain.blocks[-1].current_hash:
+                self.outOfOrderBlocks.remove(outOfOrderBlock)
+                address = 'http://' + self.ID_to_IP(self.id) + ':' + self.ID_to_port(self.id)
+                requests.post(address + '/get_block', data=pickle.dumps(outOfOrderBlock))
+                break
 
     def share_ring(self, ring_node):
         """Shares the node's ring (neighbor nodes) to a specific node.
@@ -428,7 +498,7 @@ class Node:
 
         address = 'http://' + ring_node['ip'] + ':' + ring_node['port']
         requests.post(address + '/get_ring',
-                      data=pickle.dumps(self.ring))
+                      data=pickle.dumps(self.chainState_ring))
 
     def validate_chain(self, chain):
         """Validates all the blocks of a chain.
@@ -445,7 +515,7 @@ class Node:
         'ring' is the ring if the changes of the chain
         is applied to the initial state (self.ring)
         """
-        temp_ring = deepcopy(self.ring)
+        temp_ring = deepcopy(self.chainState_ring)
         for ring_node in temp_ring:
             ring_node['balance'] = 0
             ring_node['nonces'] = []
