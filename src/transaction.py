@@ -15,16 +15,20 @@ class Transaction:
         message (string): the sent message, defaults to empty string "" 
         nonce (int): counter of transactions made by the sender
         transaction_id (int): hash of the transaction.
+        TTL (int): (Time-To-Live) is the index of the last block of the node's chain when the transaction
+                    is created. If the transaction remain unconfirmed in the network more than a limit (compare the TTL
+                    with the index of the last block of the current chain) the transaction is rejected
         signature (int): signature that verifies that the owner of the wallet created the transaction.
     """
 
-    def __init__(self, sender_address, receiver_address, amount, message, nonce):
+    def __init__(self, sender_address, receiver_address, amount, message, nonce, TTL):
         """Inits a Transaction"""
         self.sender_address = sender_address
         self.receiver_address = receiver_address
         self.amount = amount 
         self.message = message
         self.nonce = nonce
+        self.TTL = TTL
         self.transaction_id = self.get_hash()
         self.signature = None
 

@@ -76,6 +76,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     PORT = args.p
     endpoints.N = args.n
+    node.TTL_LIMIT = args.n
+    # set the TTL limit as big as the network
     node.CAPACITY = args.capacity
     IS_BOOTSTRAP = args.bootstrap
     endpoints.IS_BOOTSTRAP = IS_BOOTSTRAP
@@ -97,7 +99,7 @@ if __name__ == '__main__':
 
         # Adds the first and only transaction in the genesis block.
         first_transaction = Transaction(sender_address="0", receiver_address=node.wallet.public_key, 
-            amount=1000 * endpoints.N, message="", nonce=0)
+            amount=1000 * endpoints.N, message="", nonce=0, TTL=gen_block.index)
         
         gen_block.add_transaction(first_transaction)
         gen_block.set_hash()

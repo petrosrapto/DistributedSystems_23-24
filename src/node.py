@@ -169,7 +169,8 @@ class Node:
             receiver_address=receiver,
             amount=amount,
             message=message,
-            nonce=self.send_counter
+            nonce=self.send_counter,
+            TTL=self.chain.blocks[-1].index
         )
 
         # Sign the transaction
@@ -224,7 +225,7 @@ class Node:
 
         return True
 
-    def validate_transaction(self, transaction, ring=None, validator=None):
+    def validate_transaction(self, transaction, ring=None, validator=None, block=None):
         """Validates an incoming transaction.
 
         if not ring is given as argument, the node's softState_ring 
@@ -252,6 +253,10 @@ class Node:
 
         ring = ring if ring is not None else self.softState_ring
         validator_id = validator if validator is not None else self.find_validator()
+        block = block if block is not None else self.chain.blocks[-1]
+        # if the block is given check its index, otherwise chain the last block of the chain
+        if block.index-transaction.TTL > self.TTL_LIMIT: 
+            return (False, None) # reject transaction as old one
 
         # negative amounts are accepted only for stake transactions
         if transaction.amount < 0:
@@ -415,7 +420,7 @@ class Node:
         
         temp_ring = deepcopy(ring)
         for transaction in block.transactions:
-            (validation, temp_ring) = self.validate_transaction(transaction, temp_ring, validator=self.key_to_ID(block.validator))
+            (validation, temp_ring) = self.validate_transaction(transaction, temp_ring, validator=self.key_to_ID(block.validator), block=block)
             if validation == False:
                 return (False, None)
         return (True, temp_ring)
@@ -468,10 +473,22 @@ class Node:
             # AND CHANGE THE SOFT STATE
             for tr in self.transaction_pool:
                 (validation, changed_ring) = self.validate_transaction(tr)
-                if validation == True:
+                # if the transaction is not valid yet remove it
+                # check if the transaction is old, if it is remove it
+                if validation == True and mined_block.index-tr.TTL <= self.TTL_LIMIT: 
                     self.softState_ring = changed_ring
                 else: # not valid, remove it
                     self.transaction_pool.remove(tr)
+                    if mined_block.index-tr.TTL > self.TTL_LIMIT: # transaction failed (as old)
+                        # If the node is the recipient or the sender of the transaction,
+                        # it changes the status of the transaction in its wallet.
+                        if (tr.receiver_address == self.wallet.public_key or \
+                            tr.sender_address == self.wallet.public_key):
+                            for w_tr in self.wallet.transactions:
+                                if w_tr[0] == tr:
+                                    w_tr[1] = "None"
+                                    w_tr[2] = "Failed"
+                                    break
         finally:
             #pass
             self.transaction_pool_lock.release()
