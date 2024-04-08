@@ -460,35 +460,26 @@ class Node:
         """
         self.transaction_pool_lock.acquire()
         try:
-            for tr in mined_block.transactions:
-                try:
-                    # This will remove the first occurrence of tr from transaction_pool
-                    # Assumes that Transaction objects support direct comparison (e.g., via __eq__)
-                    self.transaction_pool.remove(tr)
-                except ValueError:
-                    # Transaction not found in the pool; can happen if it's already been removed
-                    # or was not there to begin with.
-                    pass
+            
+            # Remove transactions that are in the mined block
+            self.transaction_pool = deque(
+                tr for tr in self.transaction_pool if tr not in mined_block.transactions
+            )
             # MUST VALIDATE THE TRANSACTIONS REMAINED IN THE TRANSACTION POOL
             # AND CHANGE THE SOFT STATE
+            transactions_to_remove = [] # list to collect transactions that need to be removed
             for tr in self.transaction_pool:
                 (validation, changed_ring) = self.validate_transaction(tr)
                 # if the transaction is not valid yet remove it
                 # check if the transaction is old, if it is remove it
                 if validation == True and mined_block.index-tr.TTL <= self.TTL_LIMIT: 
                     self.softState_ring = changed_ring
-                else: # not valid, remove it
-                    self.transaction_pool.remove(tr)
-                    if mined_block.index-tr.TTL > self.TTL_LIMIT: # transaction failed (as old)
-                        # If the node is the recipient or the sender of the transaction,
-                        # it changes the status of the transaction in its wallet.
-                        if (tr.receiver_address == self.wallet.public_key or \
-                            tr.sender_address == self.wallet.public_key):
-                            for w_tr in self.wallet.transactions:
-                                if w_tr[0] == tr:
-                                    w_tr[1] = "None"
-                                    w_tr[2] = "Failed"
-                                    break
+                else: # not valid or old, remove it
+                    transactions_to_remove.append(tr)
+
+            # Remove the transactions that are invalid or too old
+            for tr in transactions_to_remove:
+                self.transaction_pool.remove(tr)
         finally:
             #pass
             self.transaction_pool_lock.release()
@@ -500,12 +491,18 @@ class Node:
             can get in order. If there is the next block in the queue, 
             remove it and send it again to myself
         """
+        # Use a list to track blocks to be removed
+        blocks_to_remove = []
         for outOfOrderBlock in self.outOfOrderBlocks:
             if outOfOrderBlock.previous_hash == self.chain.blocks[-1].current_hash:
-                self.outOfOrderBlocks.remove(outOfOrderBlock)
+                blocks_to_remove.append(outOfOrderBlock)
                 address = 'http://' + self.ID_to_IP(self.id) + ':' + self.ID_to_port(self.id)
                 requests.post(address + '/get_block', data=pickle.dumps(outOfOrderBlock))
                 break
+        
+        # Remove the identified blocks
+        for block in blocks_to_remove:
+            self.outOfOrderBlocks.remove(block)
 
     def share_ring(self, ring_node):
         """Shares the node's ring (neighbor nodes) to a specific node.

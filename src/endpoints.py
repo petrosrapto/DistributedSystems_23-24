@@ -50,6 +50,7 @@ def get_block():
         elif new_block.previous_hash != node.chain.blocks[-1].current_hash:
             # received out of order 
             node.outOfOrderBlocks.append(new_block)
+            return jsonify({'message': "Block received out of order."}), 202
         else:
             return jsonify({'mesage': "Block rejected."}), 400
     except Exception as e:
@@ -312,6 +313,8 @@ def get_my_transactions():
             a formatted list of transactions in pickle format.
     '''
     try:
+        # update the status of the transactions, check if some failed
+        node.wallet.updateFailedTransactions()
         wallet_transactions_list = [tr[0].to_list() for tr in node.wallet.transactions]
         modified_transactions_list = [
             [

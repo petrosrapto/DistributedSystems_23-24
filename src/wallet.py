@@ -40,3 +40,10 @@ class Wallet:
     def get_stake(self):
         """Returns the stake of the wallet"""
         return self.parent_node.ID_to_stake(self.parent_node.id, self.parent_node.softState_ring)
+    
+    def updateFailedTransactions(self):
+        for w_tr in self.transactions:
+            if w_tr[2] == "Unconfirmed" and self.parent_node.chain.blocks[-1].index-w_tr[0].TTL > self.parent_node.TTL_LIMIT: # transaction failed (as old)
+                w_tr[1] = "None"
+                w_tr[2] = "Failed"
+                            
