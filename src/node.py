@@ -10,6 +10,7 @@ from blockchain import Blockchain
 from block import Block
 from wallet import Wallet
 from transaction import Transaction
+import traceback
 
 class Node:
     """
@@ -52,6 +53,7 @@ class Node:
         self.transaction_pool = deque()
         self.outOfOrderBlocks = deque()
         self.send_counter = 0
+        self.need_to_filter = False
 
     def __str__(self):
         """Returns a string representation of a Node object."""
@@ -192,10 +194,12 @@ class Node:
            This method adds transactions in the block
            transaction_pool_lock is already acquired
         """
-        self.transaction_pool_lock.acquire()
+        #self.transaction_pool_lock.acquire()
+        # while(self.need_to_filter):
+        #     pass
         for i in range(self.CAPACITY):
             block.add_transaction(self.transaction_pool.popleft())
-        self.transaction_pool_lock.release()
+        #self.transaction_pool_lock.release()
         return block
 
     def broadcast_transaction(self, transaction):
@@ -249,6 +253,7 @@ class Node:
         """
 
         if not transaction.verify_signature():
+            print("Invalid Transaction - Wrong Signature")
             return (False, None)
 
         ring = ring if ring is not None else self.softState_ring
@@ -256,20 +261,25 @@ class Node:
         block = block if block is not None else self.chain.blocks[-1]
         # if the block is given check its index, otherwise chain the last block of the chain
         if block.index-transaction.TTL > self.TTL_LIMIT: 
+            print("Invalid Transaction - Old Transaction")
             return (False, None) # reject transaction as old one
 
         # negative amounts are accepted only for stake transactions
         if transaction.amount < 0:
             if transaction.receiver_address != "0":
+                print("Invalid Transaction - negative amount but not stake")
                 return (False, None)
             # if the stakes update (amount) is greater than the actual stake
             if self.ID_to_stake(self.key_to_ID(transaction.sender_address), ring) < abs(transaction.amount):
+                print("Invalid Transaction - Stake issue")
                 return (False, None)
         else:
             if self.ID_to_balance(self.key_to_ID(transaction.sender_address), ring) < self.totalChargedAmount(transaction.amount, transaction.message, transaction.receiver_address == "0"):
+                print("Invalid Transaction - Insufficient balance")
                 return (False, None)
 
         if transaction.nonce in self.ID_to_nonces(self.key_to_ID(transaction.sender_address), ring):
+            print("Invalid Transaction - Repeated nonce")
             return (False, None)
 
         temp_ring = deepcopy(ring)
@@ -291,12 +301,17 @@ class Node:
             then a block can be formed, call mine_block()
         """
         self.transaction_pool_lock.acquire()
-        self.transaction_pool.append(transaction)
-        if len(self.transaction_pool) >= self.CAPACITY:
+        try: 
+            self.transaction_pool.append(transaction)
+            if len(self.transaction_pool) >= self.CAPACITY:
+                self.mint_block()
+        except Exception as e:
+            tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+            traceback_string = "".join(tb_str)
+            print(traceback_string)
+        finally:
             self.transaction_pool_lock.release()
-            self.mint_block()
-        else:
-            self.transaction_pool_lock.release()
+
 
     def find_validator(self, block=None, ring=None, chain=None):
         """ Finds the validator of the block according 
@@ -349,7 +364,6 @@ class Node:
 
         if (validator != self.id):
             return False
-
         mined_block = self.create_new_block()
         self.broadcast_block(mined_block)
         return True
@@ -412,16 +426,20 @@ class Node:
         chain = chain if chain is not None else self.chain
 
         if block.current_hash != block.get_hash(): 
+            print(f"Invalid Block: {block.index} - Wrong Hash")
             return (False, None)
         if block.previous_hash != chain.blocks[-1].current_hash:
+            print(f"Invalid Block: {block.index} - Out of order")
             return (False, None)
         if self.find_validator(block, ring, chain) != self.key_to_ID(block.validator):
+            print(f"Invalid Block: {block.index} - Wrong Validator")
             return (False, None)
         
         temp_ring = deepcopy(ring)
         for transaction in block.transactions:
             (validation, temp_ring) = self.validate_transaction(transaction, temp_ring, validator=self.key_to_ID(block.validator), block=block)
             if validation == False:
+                print(f"Invalid Block: {block.index}, {block.get_hash()} - Invalid Transaction"+str(transaction))
                 return (False, None)
         return (True, temp_ring)
 
@@ -435,6 +453,8 @@ class Node:
             after filter_transactions() transactions remain 
             in the transaction pool, they must get validated
             again and the softState must adjust accordingly  
+
+            need_to_filter flag essential for the synchronization
         """
 
         # If the node is the recipient or the sender of the transaction,
@@ -451,6 +471,7 @@ class Node:
         self.chain.blocks.append(block)
         self.chainState_ring = deepcopy(new_ring)
         self.softState_ring = deepcopy(new_ring)
+        self.need_to_filter = True
 
     def filter_transactions(self, mined_block):
         """ When a block is got, validated and added to the chain,
@@ -458,9 +479,10 @@ class Node:
             Additionally, if transactions remain in the transaction pool,
             we should change the softState accordingly
         """
+       
         self.transaction_pool_lock.acquire()
         try:
-            
+            print(f"Entering filter_transactions of block {mined_block.index}")
             # Remove transactions that are in the mined block
             self.transaction_pool = deque(
                 tr for tr in self.transaction_pool if tr not in mined_block.transactions
@@ -475,14 +497,21 @@ class Node:
                 if validation == True and mined_block.index-tr.TTL <= self.TTL_LIMIT: 
                     self.softState_ring = changed_ring
                 else: # not valid or old, remove it
+                    print("transaction filtered")
                     transactions_to_remove.append(tr)
 
             # Remove the transactions that are invalid or too old
             for tr in transactions_to_remove:
                 self.transaction_pool.remove(tr)
+        except Exception as e:
+            tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+            traceback_string = "".join(tb_str)
+            print(traceback_string)
         finally:
             #pass
             self.transaction_pool_lock.release()
+            self.need_to_filter = False
+            print("Quiting filter_transactions")
 
     def checkOutOfOrderBlocks(self):
         """ When a block is got, validated and added to the chain,

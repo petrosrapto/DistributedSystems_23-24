@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from flask import Blueprint, jsonify, request
 import traceback
+import threading
 ###########################################################
 ################## INITIALIZATIONS ########################
 ###########################################################
@@ -35,17 +36,31 @@ def get_block():
 
     try:
         new_block = pickle.loads(request.get_data())
+        print(f"Block {new_block.index} got")
+        print(str(new_block))
+        print("------ Block Transactions ----- ")
+        for tr in new_block.transactions:
+            print(str(tr.message))
+        print("------------------------------- ")
         (validation, changed_ring) = node.validate_block(new_block)
         if validation:
             # If the block is valid:
             # - Add block to the current blockchain.
             # - Remove the new_block's transactions from the unconfirmed_blocks of the node.
-            node.chain_lock.acquire()
-            node.add_block_to_chain(new_block, changed_ring)
-            node.chain_lock.release()
-            node.filter_transactions(new_block)
-            node.checkOutOfOrderBlocks()
-            return jsonify({'message': "OK"})
+
+            def process_block_internally():
+                node.chain_lock.acquire()
+                node.add_block_to_chain(new_block, changed_ring)
+                node.chain_lock.release()
+                node.filter_transactions(new_block)
+                node.checkOutOfOrderBlocks()
+
+            # Start processing the transaction in a background thread
+            threading.Thread(target=process_block_internally).start()
+
+            # Immediately return a response to the client
+            return jsonify({'message': "OK"}), 200
+     
         # what happens when a block is rejected?
         elif new_block.previous_hash != node.chain.blocks[-1].current_hash:
             # received out of order 
@@ -75,12 +90,20 @@ def validate_transaction():
         new_transaction = pickle.loads(request.get_data())
         (validation, changed_ring) = node.validate_transaction(new_transaction)
         if validation:
-            node.add_transaction_to_pool(new_transaction)
-            node.softState_ring = changed_ring
-            # if the current node is the receiver or the sendera added to its wallet
-            if (new_transaction.receiver_address == node.wallet.public_key or \
-                new_transaction.sender_address == node.wallet.public_key):
-                node.wallet.transactions.append([new_transaction, "None", "Unconfirmed"])
+            def process_transaction_internally():
+                node.softState_ring = changed_ring
+                # if the current node is the receiver or the sender added to its wallet
+                if (new_transaction.receiver_address == node.wallet.public_key or \
+                    new_transaction.sender_address == node.wallet.public_key):
+                    node.wallet.transactions.append([new_transaction, "None", "Unconfirmed"])
+                while(node.need_to_filter):
+                    pass
+                node.add_transaction_to_pool(new_transaction)
+
+            # Start processing the transaction in a background thread
+            threading.Thread(target=process_transaction_internally).start()
+
+            # Immediately return a response to the client
             return jsonify({'message': "OK"}), 200
         else:
             return jsonify({'message': "The transaction is invalid"}), 400
