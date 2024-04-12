@@ -19,7 +19,6 @@ Each user has a wallet with a private key for sending BCCs and messages, and a p
 
 1. A rest api that implements the functionality of BlockChat and is placed in `src` directory.
 2. A cli client placed in `src/tester.py`.
-3. A web app in `webapp` directory.
 
 ## Setup/Usage
 
@@ -76,7 +75,6 @@ Each user has a wallet with a private key for sending BCCs and messages, and a p
     - pycryptodome
     - requests
     - PyInquirer
-2. The webapp is developed using Django 3.0.4 and Python 3.6
 
 ## Evaluation of the system
 
@@ -86,7 +84,6 @@ We evaluate the performance and the scalability of BlockChat by running the syst
 
 - `src/`: Source code of the rest backend and cli client.
 - `test/`: Files regarding the evaluation of the system.
-- `webapp/`: Files about the web app.
 
 ## Contributors
 
